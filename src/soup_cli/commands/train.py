@@ -61,6 +61,59 @@ _HW_FIT_QUANT = {
 # The formats above that train in bf16, and how the gate's panel names them.
 _HW_FIT_DEQUANTIZED_ON_LOAD = {"mxfp4": "MXFP4", "fp8": "FP8"}
 
+# #1884: Cloud training unsupported vs forwarded parameter completeness constants.
+REFUSED_CLOUD_FLAGS: frozenset[str] = frozenset({
+    "dry_run",
+    "resume",
+    "wandb",
+    "tensorboard",
+    "tracker",
+    "deepspeed",
+    "fsdp",
+    "gpus",
+    "no_reexec",
+    "gate",
+    "push_as",
+    "hf_resume",
+    "find_lr",
+    "trust_remote_code",
+    "profile_run",
+    "allow_oom_attempt",
+    "diagnose_gate",
+    "annex_xi",
+    "repro_receipt",
+    "capture_activations",
+    "capture_prompts",
+    "track_energy",
+    "energy_country",
+    "energy_out",
+})
+
+FORWARDED_OR_EARLIER_CLOUD_FLAGS: frozenset[str] = frozenset({
+    "config",
+    "name",
+    "cloud",
+    "gpu",
+    "cloud_submit",
+    "yes",
+    "nodes",
+    "node_rank",
+    "master_addr",
+    "master_port",
+    "find_lr_start",
+    "find_lr_end",
+    "find_lr_steps",
+    "find_lr_output",
+    "echo_trap_tokenizer_aware",
+    "reward_hack_detector",
+    "reward_hack_halt",
+    "reward_hack_mitigation",
+    "minillm_on_policy",
+    "replay",
+    "replay_ratio",
+    "replay_seed",
+})
+
 _UNWIRED_TRAINING_TUNABLES = (
     # Group B tunables (forgetting_eval_steps, forgetting_benchmark, forgetting_stop,
     # checkpoint_eval_steps, checkpoint_eval_metric, checkpoint_eval_tasks,
@@ -881,6 +934,14 @@ def train(
 
     # --- LR range finder fast path ---
     if find_lr:
+        if cloud:
+            console.print(
+                "[red]--find-lr is not supported with --cloud.[/] "
+                "--cloud runs 'soup train --config <yaml> --yes' remotely "
+                "and forwards nothing else."
+            )
+            raise typer.Exit(2)
+
         from soup_cli.utils.lr_finder import (
             LrSweepUnavailableError,
             SweepTooShortError,
@@ -925,6 +986,8 @@ def train(
             {"minillm_on_policy": True} if minillm_on_policy else None
         ),
     )
+    if name and not cfg.experiment_name:
+        cfg.experiment_name = name
 
     # --- v0.71.36 replay passthrough ---
     try:
@@ -1073,6 +1136,45 @@ def train(
                 f"[red]Invalid --cloud / --gpu:[/] {markup_escape(str(exc))}"
             )
             raise typer.Exit(2) from exc
+
+        # #1884: refuse flags that cannot act on the remote run
+        dropped = [
+            flag
+            for flag, on in (
+                ("--resume", resume is not None),
+                ("--hf-resume", hf_resume),
+                ("--wandb", wandb),
+                ("--tensorboard", tensorboard),
+                ("--tracker", tracker is not None),
+                ("--deepspeed", deepspeed is not None),
+                ("--fsdp", fsdp is not None),
+                ("--gpus", gpus is not None),
+                ("--trust-remote-code", trust_remote_code),
+                ("--profile", profile_run),
+                ("--allow-oom-attempt", allow_oom_attempt),
+                ("--diagnose-gate", diagnose_gate is not None),
+                ("--annex-xi", annex_xi is not None),
+                ("--repro-receipt", repro_receipt is not None),
+                ("--capture-activations", capture_activations is not None),
+                ("--track-energy", track_energy),
+                ("--energy-out", energy_out is not None),
+                ("--push-as", push_as is not None),
+                ("--gate", gate is not None),
+                ("--find-lr", find_lr),
+                ("--dry-run", cloud_submit and dry_run),
+            )
+            if on
+        ]
+        if dropped:
+            verb = "is" if len(dropped) == 1 else "are"
+            flags_str = ", ".join(dropped)
+            console.print(
+                f"[red]{markup_escape(flags_str)} {verb} not supported with --cloud.[/] "
+                "--cloud runs 'soup train --config <yaml> --yes' remotely "
+                "and forwards nothing else."
+            )
+            raise typer.Exit(2)
+
         try:
             # We call the generic-shaped plan function dynamically
             plan_func = getattr(cloud_mod, f"plan_{cloud}_run", None)

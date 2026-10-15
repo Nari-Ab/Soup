@@ -208,7 +208,12 @@ Works with the tasks that have an unsloth setup: SFT (text; SFT vision and audio
 
 No local GPU? `soup train --cloud modal|lambda` renders a provider-specific controller
 from your `soup.yaml`. The config YAML is base64-embedded as **data**; credentials are read from
-the environment only when a live submission starts.
+the environment only when a live submission starts. A `--cloud` run forwards the config and
+`--gpu` only (and `--name` folded into `experiment_name`), and flags that cannot act remotely are
+refused (exit code 2): `--resume`, `--hf-resume`, `--wandb`, `--tensorboard`, `--tracker`,
+`--deepspeed`, `--fsdp`, `--gpus`, `--trust-remote-code`, `--profile`, `--allow-oom-attempt`,
+`--diagnose-gate`, `--annex-xi`, `--repro-receipt`, `--capture-activations`, `--track-energy`,
+`--energy-out`, `--push-as`, `--gate`, `--find-lr`, and `--dry-run` (when passed with `--cloud-submit`).
 
 ```bash
 pip install "soup-cli[modal]"   # only needed for live submit
