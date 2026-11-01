@@ -1302,6 +1302,14 @@ for the same reason. A sweep whose swept knob is never applied produces arms tha
 identical, so there is no partially-useful result to preserve by continuing.
 
 
+Wrong-typed training values are also reported as config errors. For example,
+`training: {minillm_enabled: 0}` is refused by both `soup train` and `soup plan`
+with exit code 1 and `training -> minillm_enabled: minillm_enabled must be bool, got int`
+under `Config validation error:`. Write `true` or `false` for this field. The string
+loader used by the API/UI raises `ValueError` with the field location too, rather
+than letting the validator's `TypeError` escape.
+
+
 ## Config size limits
 
 A config file may be at most 1 MiB, nest mappings and lists at most 100 levels,

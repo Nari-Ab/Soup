@@ -2,9 +2,16 @@
 
 import math
 import re
+from functools import wraps
 from typing import Any, Callable, Dict, List, Literal, NamedTuple, Optional, Union
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 # Stream-buffer, read-ahead and noise-floor bounds come from a dependency-free
 # leaf that layer_stream, async_disk_source and ship_verdict re-export, so the
@@ -1122,6 +1129,23 @@ class EvalGateConfig(BaseModel):
                 "eval_gate.suite is required when eval_gate.enabled=true"
             )
         return self
+
+
+def _config_field_errors(validator: Callable[..., Any]) -> Callable[..., Any]:
+    """Give helper TypeErrors a Pydantic field location at the schema boundary.
+
+    Decorating the callback itself also works on Pydantic 2.0: an outer wildcard
+    wrap validator loses the field context of inner ValidationInfo callbacks there.
+    Runtime helpers retain their TypeError contract for non-config callers.
+    """
+    @wraps(validator)
+    def validated(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return validator(*args, **kwargs)
+        except TypeError as exc:
+            raise ValueError(str(exc)) from exc
+
+    return validated
 
 
 class TrainingConfig(BaseModel):
@@ -2658,12 +2682,13 @@ class TrainingConfig(BaseModel):
         mode="before",
     )
     @classmethod
-    def _validate_reward_hack_bool_fields(cls, v):
+    @_config_field_errors
+    def _validate_reward_hack_bool_fields(cls, v: Any, info: ValidationInfo) -> Any:
         """v0.71.26 — bool guard so YAML ``yes`` / ``1`` cannot silently coerce."""
         if v is None or isinstance(v, bool):
             return v
         raise TypeError(
-            f"reward-hack bool flag must be bool, got {type(v).__name__}"
+            f"{info.field_name} must be bool, got {type(v).__name__}"
         )
 
     @field_validator(
@@ -2718,6 +2743,7 @@ class TrainingConfig(BaseModel):
 
     @field_validator("reward_hack_halt", mode="before")
     @classmethod
+    @_config_field_errors
     def _validate_reward_hack_halt(cls, v):
         """v0.70.0 — explicit bool guard so YAML ``yes`` / ``1`` integers
         cannot silently coerce. Matches project bool-before-int policy.
@@ -2737,14 +2763,15 @@ class TrainingConfig(BaseModel):
         mode="before",
     )
     @classmethod
-    def _validate_echo_trap_bool_fields(cls, v):
+    @_config_field_errors
+    def _validate_echo_trap_bool_fields(cls, v: Any, info: ValidationInfo) -> Any:
         """v0.70.0 Part F — bool guards for echo-trap toggles."""
         if v is None:
             return v
         if isinstance(v, bool):
             return v
         raise TypeError(
-            f"v0.70.0 echo-trap flag must be bool, got {type(v).__name__}"
+            f"{info.field_name} must be bool, got {type(v).__name__}"
         )
 
     @field_validator(
@@ -2754,14 +2781,15 @@ class TrainingConfig(BaseModel):
         mode="before",
     )
     @classmethod
-    def _validate_rl_checkpoint_bool_fields(cls, v):
+    @_config_field_errors
+    def _validate_rl_checkpoint_bool_fields(cls, v: Any, info: ValidationInfo) -> Any:
         """v0.70.0 Part D — bool guards for RL-checkpoint toggles."""
         if v is None:
             return v
         if isinstance(v, bool):
             return v
         raise TypeError(
-            f"v0.70.0 RL-checkpoint flag must be bool, got {type(v).__name__}"
+            f"{info.field_name} must be bool, got {type(v).__name__}"
         )
 
     @field_validator(
@@ -2771,14 +2799,15 @@ class TrainingConfig(BaseModel):
         mode="before",
     )
     @classmethod
-    def _validate_minillm_bool_fields(cls, v):
+    @_config_field_errors
+    def _validate_minillm_bool_fields(cls, v: Any, info: ValidationInfo) -> Any:
         """v0.70.0 Part C — bool guards for MiniLLM toggles."""
         if v is None:
             return v
         if isinstance(v, bool):
             return v
         raise TypeError(
-            f"v0.70.0 MiniLLM flag must be bool, got {type(v).__name__}"
+            f"{info.field_name} must be bool, got {type(v).__name__}"
         )
 
     @field_validator("minillm_pretrain_anchor_path")
@@ -2796,6 +2825,7 @@ class TrainingConfig(BaseModel):
 
     @field_validator("minillm_rollout_length", mode="before")
     @classmethod
+    @_config_field_errors
     def _validate_minillm_rollout_length(cls, v):
         """v0.71.18 #257 — reject bool before Pydantic coerces True->1."""
         if v is None:
@@ -2815,7 +2845,8 @@ class TrainingConfig(BaseModel):
         mode="before",
     )
     @classmethod
-    def _validate_v053_bool_fields(cls, v):
+    @_config_field_errors
+    def _validate_v053_bool_fields(cls, v: Any, info: ValidationInfo) -> Any:
         """v0.53.0 — explicit bool guard so YAML ``yes`` / ``1`` integers
         cannot silently coerce. Matches project bool-before-int policy.
 
@@ -2828,11 +2859,12 @@ class TrainingConfig(BaseModel):
         if isinstance(v, bool):
             return v
         raise TypeError(
-            f"v0.53.0 flag must be bool, got {type(v).__name__}"
+            f"{info.field_name} must be bool, got {type(v).__name__}"
         )
 
     @field_validator("kv_cache_type", mode="before")
     @classmethod
+    @_config_field_errors
     def _validate_kv_cache_type(cls, v):
         """v0.53.0 Part C — bool / null-byte / oversize / case-insensitive
         normalisation via the shared helper.
@@ -2861,6 +2893,7 @@ class TrainingConfig(BaseModel):
 
     @field_validator("distill_divergence", mode="before")
     @classmethod
+    @_config_field_errors
     def _normalize_distill_divergence(cls, v):
         """v0.52.0 Part C — canonicalise ``kl`` → ``forward_kl``.
 
@@ -2876,6 +2909,7 @@ class TrainingConfig(BaseModel):
 
     @field_validator("distill_temperature", mode="before")
     @classmethod
+    @_config_field_errors
     def _validate_distill_temperature(cls, v):
         """v0.52.0 Part C — bool/NaN-rejected float in [0.05, 100]."""
         if v is None:
@@ -2886,6 +2920,7 @@ class TrainingConfig(BaseModel):
 
     @field_validator("distill_mode", mode="before")
     @classmethod
+    @_config_field_errors
     def _validate_distill_mode(cls, v):
         """v0.71.12 #145 — canonicalise + reject unknown distill modes."""
         if v is None:
@@ -2926,6 +2961,7 @@ class TrainingConfig(BaseModel):
 
     @field_validator("mod_capacity_factor", mode="before")
     @classmethod
+    @_config_field_errors
     def _validate_mod_capacity_factor(cls, v):
         """v0.71.12 #84 — bool-before-float guard (bool subclasses int)."""
         if v is None:
@@ -2936,6 +2972,7 @@ class TrainingConfig(BaseModel):
 
     @field_validator("ebft_temperature", mode="before")
     @classmethod
+    @_config_field_errors
     def _validate_ebft_temperature(cls, v):
         """v0.52.0 Part E — bool/NaN-rejected float in [1e-4, 100]."""
         if v is None:
@@ -3048,6 +3085,7 @@ class TrainingConfig(BaseModel):
 
     @field_validator("num_labels", mode="before")
     @classmethod
+    @_config_field_errors
     def _validate_num_labels(cls, v):
         """v0.52.0 Part B (security review fix) — bool-before-int guard.
 
@@ -3064,6 +3102,7 @@ class TrainingConfig(BaseModel):
 
     @field_validator("reasoning_effort", mode="before")
     @classmethod
+    @_config_field_errors
     def _validate_reasoning_effort(cls, v):
         """v0.52.0 Part G (security review fix) — canonicalise case +
         bool/null-byte/oversize rejection via the shared helper.
@@ -3101,6 +3140,7 @@ class TrainingConfig(BaseModel):
 
     @field_validator("hub", mode="before")
     @classmethod
+    @_config_field_errors
     def _normalize_hub(cls, v):
         """v0.51.0 Part E review fix — accept any case (HF / Modelscope /
         MODELERS) and normalise to lowercase before the Literal check.
@@ -4609,6 +4649,7 @@ class TrainingConfig(BaseModel):
 
     @field_validator("unlearn_method", mode="before")
     @classmethod
+    @_config_field_errors
     def _validate_unlearn_method(cls, v):
         """v0.61.0 Part A — bool / null-byte / oversize / case-insensitive
         normalisation via the shared helper.
@@ -4626,6 +4667,7 @@ class TrainingConfig(BaseModel):
 
     @field_validator("unlearn_alpha", mode="before")
     @classmethod
+    @_config_field_errors
     def _validate_unlearn_alpha(cls, v):
         """v0.61.0 Part A — bool/NaN/Inf-rejected float bounded [0.0, 10.0]."""
         if v is None:
@@ -4658,6 +4700,7 @@ class TrainingConfig(BaseModel):
 
     @field_validator("ra_dit_stage", mode="before")
     @classmethod
+    @_config_field_errors
     def _validate_ra_dit_stage(cls, v):
         """v0.62.0 Part B — case-insensitive normalisation via shared helper."""
         if v is None:
@@ -4668,6 +4711,7 @@ class TrainingConfig(BaseModel):
 
     @field_validator("ra_dit_retriever_model", mode="before")
     @classmethod
+    @_config_field_errors
     def _validate_ra_dit_retriever_model(cls, v):
         """v0.62.0 Part B — bool/null-byte/oversize rejection on retriever id."""
         if v is None:
@@ -4705,6 +4749,7 @@ class TrainingConfig(BaseModel):
 
     @field_validator("citation_style", mode="before")
     @classmethod
+    @_config_field_errors
     def _validate_citation_style(cls, v):
         """v0.62.0 Part D — case-insensitive normalisation via shared helper."""
         if v is None:
@@ -4715,6 +4760,7 @@ class TrainingConfig(BaseModel):
 
     @field_validator("citation_recall_threshold", mode="before")
     @classmethod
+    @_config_field_errors
     def _validate_citation_recall_threshold(cls, v):
         """v0.62.0 Part D — bool/NaN/Inf-rejected float bounded [0.0, 1.0]."""
         if v is None:
@@ -4751,6 +4797,7 @@ class TrainingConfig(BaseModel):
 
     @field_validator("grace_codebook_size", mode="before")
     @classmethod
+    @_config_field_errors
     def _validate_grace_codebook_size(cls, v):
         """v0.62.0 Part E — bool-rejected positive int <= MAX_CODEBOOK_SIZE."""
         if v is None:
@@ -4761,6 +4808,7 @@ class TrainingConfig(BaseModel):
 
     @field_validator("grace_codebook_dim", mode="before")
     @classmethod
+    @_config_field_errors
     def _validate_grace_codebook_dim(cls, v):
         """v0.62.0 Part E — bool-rejected positive int <= MAX_CODEBOOK_DIM."""
         if v is None:
@@ -4768,6 +4816,7 @@ class TrainingConfig(BaseModel):
         from soup_cli.utils.grace_codebook import validate_grace_codebook_dim
 
         return validate_grace_codebook_dim(v)
+
 
 
 class ShipConfig(BaseModel):

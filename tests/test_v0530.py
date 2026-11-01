@@ -772,9 +772,20 @@ class TestLFParity:
         ],
     )
     def test_bool_guards_reject_int(self, field):
-        # The inner TypeError from `_validate_v053_bool_fields` propagates
-        # through Pydantic's field_validator(mode='before') unchanged.
-        with pytest.raises(TypeError, match="v0.53.0 flag must be bool"):
+        from pydantic import ValidationError
+
+        from soup_cli.config.schema import TrainingConfig
+
+        # The config boundary translates the helper error and names the field.
+        with pytest.raises(ValidationError, match=f"{field} must be bool"):
+            TrainingConfig(**{field: 7})
+        # The staged-field refusal still takes precedence at the public loader.
+        message = (
+            f"training.{field} is accepted but read by nothing"
+            if field == "quantize_ref_model"
+            else f"training -> {field}:.*{field} must be bool"
+        )
+        with pytest.raises(ValueError, match=message):
             load_config_from_string(
                 "base: a/b\n"
                 "task: sft\n"

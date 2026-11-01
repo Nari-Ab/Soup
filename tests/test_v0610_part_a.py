@@ -397,12 +397,11 @@ class TestSchemaUnlearnTask:
             TrainingConfig(unlearn_method="npo", unlearn_alpha=11.0)
 
     def test_unlearn_alpha_bool_rejected(self):
+        from pydantic import ValidationError
+
         from soup_cli.config.schema import TrainingConfig
 
-        # Bool raises TypeError from the validator; Pydantic v2 does not
-        # wrap TypeError in ValidationError (only ValueError /
-        # AssertionError / PydanticCustomError).
-        with pytest.raises(TypeError, match="bool"):
+        with pytest.raises(ValidationError, match="unlearn_alpha must not be bool"):
             TrainingConfig(unlearn_method="npo", unlearn_alpha=True)
 
     def test_unlearn_alpha_without_method_rejected(self):
